@@ -5,9 +5,9 @@ import java.io.FileNotFoundException;
 import java.time.LocalDateTime;
 
 public class Logger {
-	final String peerID;
-	final String logFileName;
-	PrintWriter writer;
+	private final String peerID;
+	private final String logFileName;
+	private PrintWriter writer;
 	private boolean consoleDisplay;
 	
 	static enum Direction {

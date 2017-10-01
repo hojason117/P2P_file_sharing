@@ -6,6 +6,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.BitSet;
 import java.util.Scanner;
+import java.util.ArrayList;
 
 public class peerProcess {
 	private static final String commonConfigPath = "Common.cfg";
@@ -17,27 +18,32 @@ public class peerProcess {
 	final String fileName;
 	final int fileSize;
 	final int pieceSize;
-	final String peerID;
-	final int port;
 	final int pieceCount;
+	final String peerID;
+	final String addr;
+	final int port;
+	boolean hasFile;
 	BitSet bitfield;
+	ArrayList<String> initialNeighborsID;
+	ArrayList<String> initialNeighborsAddr;
+	ArrayList<Integer> initialNeighborsPort;
+	Controller controller;
+	FileHandler fileHandler;
 	Logger logger;
 
-	public static void main(String[] args) throws FileNotFoundException, IOException {
-		peerProcess peer = new peerProcess(args[0]);
+	public static void main(String[] args) throws InterruptedException, IOException {
+		peerProcess peer;
 		
 		try {
 			peer = new peerProcess(args[0]);
 		}
-		catch(FileNotFoundException e) {
-			System.out.println("Cannot find config files.");
-			return;
-		}
-		catch(IOException e) {
-			System.out.println("Failed to read config files.");
+		catch(Exception e) {
 			return;
 		}
 		
+		peer.start();
+		
+		// Console control
 		Scanner scanner = new Scanner(System.in);
 		String op;
 		while(true) {
@@ -51,6 +57,7 @@ public class peerProcess {
 				break;
 			case "q":
 				scanner.close();
+				peer.controller.shutdown();
 				return;
 			case "d":
 				peer.logger.toggleConsoleDisplay();
@@ -64,11 +71,7 @@ public class peerProcess {
 	
 	peerProcess(String arg) throws FileNotFoundException, IOException {
 		BufferedReader commonConfigReader = new BufferedReader(new FileReader(commonConfigPath));
-		BufferedReader peerInfoConfigReader = new BufferedReader(new FileReader(peerInfoConfigPath));
-		
 		try {
-			peerID = new String(arg);
-			
 			String line;
 			line = commonConfigReader.readLine();
 			numPrefNeighbor = Integer.parseInt(line.substring(27));
@@ -83,33 +86,73 @@ public class peerProcess {
 			line = commonConfigReader.readLine();
 			pieceSize = Integer.parseInt(line.substring(10));
 			
+			int temp = fileSize / pieceSize;
+			if(fileSize % pieceSize != 0)
+				temp++;
+			pieceCount = temp;
+		}
+		catch(FileNotFoundException e) {
+			System.out.println("Cannot find " + commonConfigPath + ".");
+			throw e;
+		}
+		catch(IOException e) {
+			System.out.println("Failed to read " + commonConfigPath + ".");
+			throw e;
+		}
+		finally {
+			commonConfigReader.close();
+		}
+		
+		BufferedReader peerInfoConfigReader = new BufferedReader(new FileReader(peerInfoConfigPath));
+		try {
+			peerID = new String(arg);
+			
+			String line;
 			line = peerInfoConfigReader.readLine();
 			while(line != null) {
 				String info[] = line.split(" ");
 				if(info[0].equals(peerID)) {
+					addr = info[1];
 					port = Integer.parseInt(info[2]);
 					
-					int temp = fileSize / pieceSize;
-					if(fileSize % pieceSize != 0)
-						temp++;
-					pieceCount = temp;
 					bitfield = new BitSet(pieceCount);
+					hasFile = false;
 					if(Integer.parseInt(info[3]) == 1) {
 						for(int i = 0; i < bitfield.size(); i++)
 							bitfield.set(i);
+						hasFile = true;
 					}
 					
-					logger = new Logger(info[0]);
+					controller = new Controller(this);
+					fileHandler = new FileHandler(this);
+					logger = new Logger(peerID);
 					
 					peerInfoConfigReader.close();
 					return;
 				}
+				else {
+					initialNeighborsID.add(info[0]);
+					initialNeighborsAddr.add(info[1]);
+					initialNeighborsPort.add(Integer.parseInt(info[2]));
+				}
 			}
 			throw new IOException();
 		}
+		catch(FileNotFoundException e) {
+			System.out.println("Cannot find " + peerInfoConfigPath + ".");
+			throw e;
+		}
+		catch(IOException e) {
+			System.out.println("Failed to read " + peerInfoConfigPath + ".");
+			throw e;
+		}
 		finally {
-			commonConfigReader.close();
 			peerInfoConfigReader.close();
 		}
+	}
+	
+	void start() {
+		Thread control = new Thread(controller);
+		control.start();
 	}
 }
