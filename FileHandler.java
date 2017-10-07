@@ -11,7 +11,7 @@ class FileHandler {
 	FileHandler(peerProcess peer) throws FileNotFoundException, IOException {
 		this.peer = peer;
 		
-		if(peer.hasFile) {
+		if(peer.peerInfos.get(peer.peerID).hasFile) {
 			file = new RandomAccessFile("peer_" + peer.peerID + "/" + peer.fileName, "r");
 			try {
 				if(file.length() != peer.fileSize)

@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.BitSet;
 import java.util.Scanner;
 import java.util.ArrayList;
+import java.util.HashMap;
 
 public class peerProcess {
 	private static final String commonConfigPath = "Common.cfg";
@@ -20,13 +21,9 @@ public class peerProcess {
 	final int pieceSize;
 	final int pieceCount;
 	final String peerID;
-	final String addr;
-	final int port;
-	boolean hasFile;
-	BitSet bitfield;
-	ArrayList<String> initialNeighborsID;
-	ArrayList<String> initialNeighborsAddr;
-	ArrayList<Integer> initialNeighborsPort;
+	HashMap<String, PeerInfo> peerInfos;
+	ArrayList<String> peerIDs;
+	ArrayList<String> previousPeersID;
 	Controller controller;
 	FileHandler fileHandler;
 	Logger logger;
@@ -43,32 +40,12 @@ public class peerProcess {
 		
 		peer.start();
 		
-		// Console control
-		Scanner scanner = new Scanner(System.in);
-		String op;
-		while(true) {
-			System.out.print("Option('h' for help): ");
-			op = scanner.nextLine();
-			switch(op) {
-			case "h":
-				System.out.println("'h' for help");
-				System.out.println("'q' to terminate process");
-				System.out.println("'d' to toggle console display");
-				break;
-			case "q":
-				scanner.close();
-				peer.controller.shutdown();
-				return;
-			case "d":
-				peer.logger.toggleConsoleDisplay();
-				break;
-				
-			default:
-				break;
-			}
-		}
+		Thread console = new Thread(new ConsoleControl(peer));
+		console.setDaemon(true);
+		console.start();
 	}
 	
+	// peerProcess constructor : initialize config parameters
 	peerProcess(String arg) throws FileNotFoundException, IOException {
 		BufferedReader commonConfigReader = new BufferedReader(new FileReader(commonConfigPath));
 		try {
@@ -106,37 +83,50 @@ public class peerProcess {
 		BufferedReader peerInfoConfigReader = new BufferedReader(new FileReader(peerInfoConfigPath));
 		try {
 			peerID = new String(arg);
+			previousPeersID = new ArrayList<String>();
 			
+			// Collect info for all peers
+			boolean readSelf = false;
 			String line;
 			line = peerInfoConfigReader.readLine();
 			while(line != null) {
 				String info[] = line.split(" ");
-				if(info[0].equals(peerID)) {
-					addr = info[1];
-					port = Integer.parseInt(info[2]);
-					
-					bitfield = new BitSet(pieceCount);
-					hasFile = false;
-					if(Integer.parseInt(info[3]) == 1) {
-						for(int i = 0; i < bitfield.size(); i++)
-							bitfield.set(i);
-						hasFile = true;
-					}
-					
-					controller = new Controller(this);
-					fileHandler = new FileHandler(this);
-					logger = new Logger(peerID);
-					
-					peerInfoConfigReader.close();
-					return;
-				}
-				else {
-					initialNeighborsID.add(info[0]);
-					initialNeighborsAddr.add(info[1]);
-					initialNeighborsPort.add(Integer.parseInt(info[2]));
-				}
+				
+				if(info[0].equals(peerID))
+					readSelf = true;
+				
+				PeerInfo newPeer;
+				if(Integer.parseInt(info[3]) == 1)
+					newPeer = new PeerInfo(info[0], info[1], Integer.parseInt(info[2]), true);
+				else
+					newPeer = new PeerInfo(info[0], info[1], Integer.parseInt(info[2]), false);
+				
+				peerInfos.put(info[0], newPeer);
+				
+				peerIDs.add(info[0]);
+				
+				if(!readSelf)
+					previousPeersID.add(info[0]);
+				
+				line = peerInfoConfigReader.readLine();
 			}
-			throw new IOException();
+			
+			// Set up own info
+			PeerInfo peer = peerInfos.get(peerID);
+			if(peer == null) {
+				System.out.println("Cannot find peer info in " + peerInfoConfigPath + ".");
+				throw new IOException();
+			}
+			
+			peer.bitfield = new BitSet(pieceCount);
+			if(peer.hasFile) {
+				for(int i = 0; i < peer.bitfield.size(); i++)
+					peer.bitfield.set(i);
+			}
+			
+			controller = new Controller(this);
+			fileHandler = new FileHandler(this);
+			logger = new Logger(peerID);
 		}
 		catch(FileNotFoundException e) {
 			System.out.println("Cannot find " + peerInfoConfigPath + ".");
@@ -151,6 +141,65 @@ public class peerProcess {
 		}
 	}
 	
+	// Holds information for a peer
+	class PeerInfo {
+		final String ID;
+		final String addr;
+		final int port;
+		boolean hasFile;
+		BitSet bitfield;
+		
+		PeerInfo(String id, String addr, int port, boolean hasFile) {
+			ID = id;
+			this.addr = addr;
+			this.port = port;
+			this.hasFile = hasFile;
+			bitfield = null;
+		}
+	}
+	
+	// Daemon thread for console control
+	private static class ConsoleControl implements Runnable {
+		final peerProcess peer;
+		
+		ConsoleControl(peerProcess peer) {
+			this.peer = peer;
+		}
+		
+		public void run() {
+			Scanner scanner = new Scanner(System.in);
+			String op;
+			while(true) {
+				System.out.print("Option('h' for help): ");
+				op = scanner.nextLine();
+				switch(op) {
+				case "h":
+					System.out.println("'h' for help");
+					System.out.println("'q' to terminate process");
+					System.out.println("'d' to toggle console display");
+					break;
+				case "q":
+					scanner.close();
+					try {
+						peer.controller.shutdown();
+					}
+					catch(IOException | InterruptedException e) {
+						System.out.println("Failed to shutdown controller.");
+						return;
+					}
+					return;
+				case "d":
+					peer.logger.toggleConsoleDisplay();
+					break;
+					
+				default:
+					break;
+				}
+			}
+		}
+	}
+	
+	// Start peerProcess : open a thread for main loop
 	void start() {
 		Thread control = new Thread(controller);
 		control.start();
