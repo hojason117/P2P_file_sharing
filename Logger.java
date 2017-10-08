@@ -3,6 +3,7 @@ package cnt5106c.p2p_file_sharing;
 import java.io.PrintWriter;
 import java.io.FileNotFoundException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 
 public class Logger {
 	private final String peerID;
@@ -36,13 +37,16 @@ public class Logger {
 			System.out.println(log);
 	}
 	
-	void logChangePreferredNeighbor(String neighbors[]) {
+	void logChangePreferredNeighbor(ArrayList<String> neighbors) {
 		String currentTime = getCurrentTime();
 		
 		String log = currentTime + ": Peer " + peerID + " has the preferred neighbors ";
-		for(int i = 0; i < neighbors.length - 1; i++)
-			log += neighbors[i] + ",";
-		log += neighbors[neighbors.length - 1] + ".";
+		if(!neighbors.isEmpty()) {
+			for(int i = 0; i < neighbors.size() - 1; i++)
+				log += neighbors.get(i) + ",";
+			log += neighbors.get(neighbors.size() - 1);
+		}
+		log += ".";
 		
 		writer.println(log);
 		if(consoleDisplay)

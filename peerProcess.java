@@ -148,6 +148,9 @@ public class peerProcess {
 		final int port;
 		boolean hasFile;
 		BitSet bitfield;
+		boolean choked;
+		PeerHandler handler;
+		boolean interested;
 		
 		PeerInfo(String id, String addr, int port, boolean hasFile) {
 			ID = id;
@@ -155,6 +158,9 @@ public class peerProcess {
 			this.port = port;
 			this.hasFile = hasFile;
 			bitfield = null;
+			choked = true;
+			handler = null;
+			interested = false;
 		}
 	}
 	

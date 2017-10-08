@@ -52,7 +52,7 @@ class FileHandler {
 	
 	void writePiece(byte[] piece, int pieceIndex) throws IOException {
 		try {
-			file.write(piece, pieceIndex * peer.pieceSize, peer.pieceSize);
+			file.write(piece, pieceIndex * peer.pieceSize, piece.length);
 		}
 		catch(IOException e) {
 			System.out.println("Failed to write to " + peer.fileName + ".");
