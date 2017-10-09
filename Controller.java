@@ -26,9 +26,10 @@ class Controller implements Runnable {
 	final private ScheduledExecutorService optUnchoke;
 	final private ScheduledExecutorService monitor;
 	final private ServerSocket server;
-	private ArrayList<PeerHandler> peerHandlers;
+	ArrayList<PeerHandler> peerHandlers;
 	ArrayList<String> interestedPeers;
 	ArrayList<String> chokedPeers;
+	ArrayList<PeerHandler.Requested> requested;
 	ArrayList<String> preferredNeighbors;
 	String optUnchokedPeerID;
 	
@@ -42,6 +43,7 @@ class Controller implements Runnable {
 		peerHandlers = new ArrayList<PeerHandler>();
 		interestedPeers = new ArrayList<String>();
 		chokedPeers = new ArrayList<String>();
+		requested = new ArrayList<PeerHandler.Requested>();
 		preferredNeighbors = new ArrayList<String>(peer.numPrefNeighbor);
 		optUnchokedPeerID = null;
 	}
@@ -85,12 +87,15 @@ class Controller implements Runnable {
 					
 					PeerHandler peerHandler = new PeerHandler(peer, partnerID, inbound);
 					peer.peerInfos.get(partnerID).handler = peerHandler;
-					peerHandlers.add(peerHandler);
+					synchronized(peerHandlers) {
+						peerHandlers.add(peerHandler);
+					}
 					threadPool.submit(peerHandler);
 					peer.logger.logTCPConnection(partnerID, Logger.Direction.CONNECT_FROM);
 					
 					DataOutputStream out = new DataOutputStream(inbound.getOutputStream());
 					out.writeBytes(Handshake.genHandshakeMessage(Integer.parseInt(peer.peerID)));
+					out.flush();
 					
 					in.close();
 					out.close();
@@ -135,7 +140,9 @@ class Controller implements Runnable {
 			if(Handshake.verifyHandshakeMessage(in.readLine(), Integer.parseInt(p))) {
 				PeerHandler peerHandler = new PeerHandler(peer, p, client);
 				peer.peerInfos.get(p).handler = peerHandler;
-				peerHandlers.add(peerHandler);
+				synchronized(peerHandlers) {
+					peerHandlers.add(peerHandler);
+				}
 				threadPool.submit(peerHandler);
 				peer.logger.logTCPConnection(p, Logger.Direction.CONNECT_TO);
 			}
@@ -172,8 +179,8 @@ class Controller implements Runnable {
 	
 	// Select and unchoke preferred neighbors
 	private static class UnchokeHandler implements Runnable {
-		peerProcess peer;
-		Random random;
+		final peerProcess peer;
+		final Random random;
 		
 		UnchokeHandler(peerProcess peer) {
 			this.peer = peer;
@@ -181,12 +188,12 @@ class Controller implements Runnable {
 		}
 		
 		public void run() {
-			synchronized(peer.controller.chokedPeers) {
-				ArrayList<String> previous = new ArrayList<String>(peer.controller.preferredNeighbors);
-				peer.controller.preferredNeighbors.clear();
-				
-				// Select new preferred neighbors
-				if(peer.peerInfos.get(peer.peerID).hasFile) {
+			ArrayList<String> previous = new ArrayList<String>(peer.controller.preferredNeighbors);
+			peer.controller.preferredNeighbors.clear();
+			
+			// Select new preferred neighbors
+			if(peer.peerInfos.get(peer.peerID).hasFile) {
+				synchronized(peer.controller.interestedPeers) {
 					for(int i = 0; (i < peer.numPrefNeighbor) && (peer.controller.interestedPeers.size() - i > 0); i++) {
 						int index = random.nextInt(peer.controller.interestedPeers.size());
 						while(peer.controller.preferredNeighbors.contains(peer.controller.interestedPeers.get(index))) 
@@ -195,43 +202,47 @@ class Controller implements Runnable {
 						peer.controller.preferredNeighbors.add(peer.controller.interestedPeers.get(index));
 					}
 				}
-				else {
-					class DownloadRateComparator implements Comparator<String> {
-						public int compare(String p1, String p2) {
-							return Integer.compare(peer.peerInfos.get(p1).handler.downloadRate, peer.peerInfos.get(p2).handler.downloadRate);
-						}
-					}
-					DownloadRateComparator compare = new DownloadRateComparator();
-					PriorityQueue<String> pQueue = new PriorityQueue<String>(10, compare.reversed());
-					
-					for(String p : peer.controller.interestedPeers)
-						pQueue.add(p);
-					
-					int quota = peer.numPrefNeighbor;
-					while(quota > 0 && !pQueue.isEmpty()) {
-						ArrayList<String> sameRate = new ArrayList<String>();
-						sameRate.add(pQueue.poll());
-						while(peer.peerInfos.get(pQueue.peek()).handler.downloadRate == peer.peerInfos.get(sameRate.get(0)).handler.downloadRate)
-							sameRate.add(pQueue.poll());
-						
-						if(sameRate.size() <= quota) {
-							for(String p : sameRate)
-								peer.controller.preferredNeighbors.add(p);
-							quota -= sameRate.size();
-						}
-						else {
-							for(int i = 0; i < quota; i++) {
-								int index = random.nextInt(sameRate.size());
-								peer.controller.preferredNeighbors.add(sameRate.get(index));
-								sameRate.remove(index);
-							}
-							quota = 0;
-						}
+			}
+			else {
+				class DownloadRateComparator implements Comparator<String> {
+					public int compare(String p1, String p2) {
+						return Integer.compare(peer.peerInfos.get(p1).handler.downloadRate, peer.peerInfos.get(p2).handler.downloadRate);
 					}
 				}
+				DownloadRateComparator compare = new DownloadRateComparator();
+				PriorityQueue<String> pQueue = new PriorityQueue<String>(10, compare.reversed());
 				
-				peer.logger.logChangePreferredNeighbor(peer.controller.preferredNeighbors);
+				synchronized(peer.controller.interestedPeers) {
+					for(String p : peer.controller.interestedPeers)
+						pQueue.add(p);
+				}
 				
+				int quota = peer.numPrefNeighbor;
+				while(quota > 0 && !pQueue.isEmpty()) {
+					ArrayList<String> sameRate = new ArrayList<String>();
+					sameRate.add(pQueue.poll());
+					while(peer.peerInfos.get(pQueue.peek()).handler.downloadRate == peer.peerInfos.get(sameRate.get(0)).handler.downloadRate)
+						sameRate.add(pQueue.poll());
+					
+					if(sameRate.size() <= quota) {
+						for(String p : sameRate)
+							peer.controller.preferredNeighbors.add(p);
+						quota -= sameRate.size();
+					}
+					else {
+						for(int i = 0; i < quota; i++) {
+							int index = random.nextInt(sameRate.size());
+							peer.controller.preferredNeighbors.add(sameRate.get(index));
+							sameRate.remove(index);
+						}
+						quota = 0;
+					}
+				}
+			}
+			
+			peer.logger.logChangePreferredNeighbor(peer.controller.preferredNeighbors);
+			
+			synchronized(peer.controller.chokedPeers) {
 				// Choke previous preferred neighbors
 				for(String p : previous) {
 					if(!peer.controller.preferredNeighbors.contains(p)) {
@@ -262,8 +273,10 @@ class Controller implements Runnable {
 						}
 					}
 				}
-				
-				// Reset download rate counter for all peers
+			}
+			
+			// Reset download rate counter for all peers
+			synchronized(peer.controller.peerHandlers) {
 				for(PeerHandler ph : peer.controller.peerHandlers)
 					ph.downloadRate = 0;
 			}
@@ -272,8 +285,8 @@ class Controller implements Runnable {
 	
 	// Randomly select and unchoke optimistically unchoked neighbor
 	private static class OptUnchokeHandler implements Runnable {
-		peerProcess peer;
-		Random random;
+		final peerProcess peer;
+		final Random random;
 		
 		OptUnchokeHandler(peerProcess peer) {
 			this.peer = peer;
@@ -315,18 +328,22 @@ class Controller implements Runnable {
 	// Handle choke messages
 	private static class Choke {
 		static void sendChokeMessage(DataOutputStream out) throws IOException {
-			out.writeInt(1);
-			out.writeByte(PeerHandler.MessageType.CHOKE.value);
-			out.flush();
+			synchronized(out) {
+				out.writeInt(1);
+				out.writeByte(PeerHandler.MessageType.CHOKE.value);
+				out.flush();
+			}
 		}
 	}
 
 	// Handle unchoke messages
 	private static class Unchoke {
 		static void sendUnchokeMessage(DataOutputStream out) throws IOException {
-			out.writeInt(1);
-			out.writeByte(PeerHandler.MessageType.UNCHOKE.value);
-			out.flush();
+			synchronized(out) {
+				out.writeInt(1);
+				out.writeByte(PeerHandler.MessageType.UNCHOKE.value);
+				out.flush();
+			}
 		}
 	}
 	
@@ -362,8 +379,11 @@ class Controller implements Runnable {
 	
 	// Shutdown the main loop and close all connections
 	void shutdown() throws InterruptedException, IOException {
-		for (PeerHandler ph : peerHandlers)
-			ph.shutdown();
+		synchronized(peerHandlers) {
+			for (PeerHandler ph : peerHandlers)
+				ph.shutdown();
+			peerHandlers = null;
+		}
 		
 		threadPool.shutdown();
 		if(threadPool.awaitTermination(30, TimeUnit.SECONDS)) {

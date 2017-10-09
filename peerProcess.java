@@ -118,7 +118,6 @@ public class peerProcess {
 				throw new IOException();
 			}
 			
-			peer.bitfield = new BitSet(pieceCount);
 			if(peer.hasFile) {
 				for(int i = 0; i < peer.bitfield.size(); i++)
 					peer.bitfield.set(i);
@@ -149,18 +148,18 @@ public class peerProcess {
 		boolean hasFile;
 		BitSet bitfield;
 		boolean choked;
-		PeerHandler handler;
 		boolean interested;
+		PeerHandler handler;
 		
 		PeerInfo(String id, String addr, int port, boolean hasFile) {
 			ID = id;
 			this.addr = addr;
 			this.port = port;
 			this.hasFile = hasFile;
-			bitfield = null;
+			bitfield = new BitSet(pieceCount);
 			choked = true;
-			handler = null;
 			interested = false;
+			handler = null;
 		}
 	}
 	
