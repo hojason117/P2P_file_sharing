@@ -3,12 +3,9 @@ package cnt5106c.p2p_file_sharing;
 import java.net.Socket;
 import java.net.ServerSocket;
 import java.net.SocketException;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.io.DataOutputStream;
-import java.io.InputStreamReader;
-import java.io.BufferedReader;
+import java.io.DataInputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
@@ -59,18 +56,22 @@ class Controller implements Runnable {
 		}
 		catch(IOException e) {
 			System.out.println("Failed to connect to previous peers.");
+			e.printStackTrace();
 			try {
 				shutdown();
 			}
 			catch(InterruptedException ex) {
 				System.out.println("Failed to shutdown.");
+				ex.printStackTrace();
 			}
 			catch(IOException ex) {
 				System.out.println("Failed to close server.");
+				ex.printStackTrace();
 			}
 			return;
 		}
 		catch(InterruptedException e) {
+			e.printStackTrace();
 			return;
 		}
 		
@@ -79,49 +80,49 @@ class Controller implements Runnable {
 				Socket inbound = server.accept();
 				inbound.setSoTimeout(20000);
 				
-				BufferedReader in = new BufferedReader(new InputStreamReader(inbound.getInputStream()));
-				String message = in.readLine();
-				
-				if(message.substring(0, 18).equals(Handshake.header)) {
-					String partnerID = String.valueOf(ByteBuffer.allocate(4).put(message.substring(28, 32).getBytes()).getInt());
+				DataInputStream in = new DataInputStream(inbound.getInputStream());
+				if(Handshake.verifyHandshakeMessage(in, null)) {
+					String partnerID = String.valueOf(in.readInt());
 					
+					DataOutputStream out = new DataOutputStream(inbound.getOutputStream());
+					Handshake.sendHandshakeMessage(out, peer.peerID);
+					
+					peer.logger.logTCPConnection(partnerID, Logger.Direction.CONNECT_FROM);
 					PeerHandler peerHandler = new PeerHandler(peer, partnerID, inbound);
 					peer.peerInfos.get(partnerID).handler = peerHandler;
 					synchronized(peerHandlers) {
 						peerHandlers.add(peerHandler);
 					}
 					threadPool.submit(peerHandler);
-					peer.logger.logTCPConnection(partnerID, Logger.Direction.CONNECT_FROM);
-					
-					DataOutputStream out = new DataOutputStream(inbound.getOutputStream());
-					out.writeBytes(Handshake.genHandshakeMessage(Integer.parseInt(peer.peerID)));
-					out.flush();
-					
-					in.close();
-					out.close();
 				}
-				else
+				else {
 					in.close();
-					inbound.close();;
+					inbound.close();
+				}
 			}
 		}
 		catch(SocketException e) {
+			System.out.println("Server closed.");
 			return;
 		}
 		catch(IOException e) {
 			System.out.println("Failed to accept connection.");
+			e.printStackTrace();
 			try {
 				shutdown();
 			}
 			catch(InterruptedException ex) {
 				System.out.println("Failed to shutdown.");
+				ex.printStackTrace();
 			}
 			catch(IOException ex) {
 				System.out.println("Failed to close server.");
+				ex.printStackTrace();
 			}
 			return;
 		}
 		catch(InterruptedException e) {
+			e.printStackTrace();
 			return;
 		}
 	}
@@ -133,22 +134,23 @@ class Controller implements Runnable {
 			client.setSoTimeout(20000);
 			
 			DataOutputStream out = new DataOutputStream(client.getOutputStream());
-			out.writeBytes(Handshake.genHandshakeMessage(Integer.parseInt(peer.peerID)));
-			out.flush();
+			Handshake.sendHandshakeMessage(out, peer.peerID);
 			
-			BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
-			if(Handshake.verifyHandshakeMessage(in.readLine(), Integer.parseInt(p))) {
+			DataInputStream in = new DataInputStream(client.getInputStream());
+			if(Handshake.verifyHandshakeMessage(in, p)) {
+				peer.logger.logTCPConnection(p, Logger.Direction.CONNECT_TO);
 				PeerHandler peerHandler = new PeerHandler(peer, p, client);
 				peer.peerInfos.get(p).handler = peerHandler;
 				synchronized(peerHandlers) {
 					peerHandlers.add(peerHandler);
 				}
 				threadPool.submit(peerHandler);
-				peer.logger.logTCPConnection(p, Logger.Direction.CONNECT_TO);
 			}
-			
-			out.close();
-			in.close();
+			else {
+				out.close();
+				in.close();
+				client.close();
+			}
 		}
 	}
 	
@@ -157,21 +159,27 @@ class Controller implements Runnable {
 		private static final String header = "P2PFILESHARINGPROJ";
 		private static final byte padding[] = new byte[10];
 		
-		static String genHandshakeMessage(int peerID) throws IOException {
-			ByteArrayOutputStream m = new ByteArrayOutputStream();
-			m.write(header.getBytes());
-			m.write(padding);
-			m.write(ByteBuffer.allocate(4).putInt(peerID).array());
-			
-			return m.toString();
+		static void sendHandshakeMessage(DataOutputStream out, String peerID) throws IOException {
+			out.writeBytes(header);
+			out.write(padding);
+			out.writeInt(Integer.parseInt(peerID));
+			out.flush();
 		}
 		
-		static boolean verifyHandshakeMessage(String message, int partnerID) throws IOException {
-			if(!message.substring(0, 18).equals(header))
+		static boolean verifyHandshakeMessage(DataInputStream in, String partnerID) throws IOException {
+			byte buffer[] = new byte[header.length()];
+			in.readFully(buffer, 0, header.length());
+			String str = new String(buffer, "UTF-8");
+			if(!str.equals(header))
 				return false;
 			
-			if(ByteBuffer.allocate(4).put(message.substring(28, 32).getBytes()).getInt() != partnerID)
-				return false;
+			byte pad[] = new byte[padding.length];
+			in.readFully(pad, 0, padding.length);
+			
+			if(partnerID != null) {
+				if(in.readInt() != Integer.parseInt(partnerID))
+					return false;
+			}
 			
 			return true;
 		}
@@ -196,7 +204,7 @@ class Controller implements Runnable {
 				synchronized(peer.controller.interestedPeers) {
 					for(int i = 0; (i < peer.numPrefNeighbor) && (peer.controller.interestedPeers.size() - i > 0); i++) {
 						int index = random.nextInt(peer.controller.interestedPeers.size());
-						while(peer.controller.preferredNeighbors.contains(peer.controller.interestedPeers.get(index))) 
+						while(peer.controller.preferredNeighbors.contains(peer.controller.interestedPeers.get(index)))
 							index = random.nextInt(peer.controller.interestedPeers.size());
 						
 						peer.controller.preferredNeighbors.add(peer.controller.interestedPeers.get(index));
@@ -249,9 +257,11 @@ class Controller implements Runnable {
 						try {
 							Choke.sendChokeMessage(peer.peerInfos.get(p).handler.out);
 							peer.controller.chokedPeers.add(p);
+							peer.peerInfos.get(p).choked = true;
 						}
 						catch(IOException e) {
 							System.out.println("Failed to send choke message.");
+							e.printStackTrace();
 						}
 					}
 				}
@@ -267,9 +277,11 @@ class Controller implements Runnable {
 									break;
 								}
 							}
+							peer.peerInfos.get(p).choked = false;
 						}
 						catch(IOException e) {
 							System.out.println("Failed to send unchoke message.");
+							e.printStackTrace();
 						}
 					}
 				}
@@ -316,6 +328,7 @@ class Controller implements Runnable {
 						}
 						catch(IOException e) {
 							System.out.println("Failed to send choke or unchoke message.");
+							e.printStackTrace();
 						}
 						
 						break;
@@ -368,9 +381,11 @@ class Controller implements Runnable {
 			if(allPeersFinished) {
 				try {
 					peer.controller.shutdown();
+					peer.logger.closeFile();
 				}
 				catch(IOException | InterruptedException e) {
 					System.out.println("Failed to shutdown controller.");
+					e.printStackTrace();
 					return;
 				}
 			}
@@ -386,14 +401,14 @@ class Controller implements Runnable {
 		}
 		
 		threadPool.shutdown();
-		if(threadPool.awaitTermination(30, TimeUnit.SECONDS)) {
+		if(!threadPool.awaitTermination(30, TimeUnit.SECONDS)) {
 			threadPool.shutdownNow();
 			System.out.println("Executor service did not terminate in 30 secs.");
 			System.out.println("May have runaway processes.");
 		}
 		
 		monitor.shutdown();
-		if(monitor.awaitTermination(30, TimeUnit.SECONDS)) {
+		if(!monitor.awaitTermination(30, TimeUnit.SECONDS)) {
 			monitor.shutdownNow();
 			System.out.println("Executor service did not terminate in 30 secs.");
 			System.out.println("May have runaway processes.");

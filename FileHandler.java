@@ -3,6 +3,7 @@ package cnt5106c.p2p_file_sharing;
 import java.io.RandomAccessFile;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.File;
 
 class FileHandler {
 	private peerProcess peer;
@@ -27,6 +28,8 @@ class FileHandler {
 		}
 		
 		try {
+			File dir = new File("peer_" + peer.peerID);
+			dir.mkdir();
 			file = new RandomAccessFile("peer_" + peer.peerID + "/" + peer.fileName, "rw");
 			file.setLength(peer.fileSize);
 		}
@@ -37,10 +40,17 @@ class FileHandler {
 	}
 	
 	byte[] readPiece(int pieceIndex) throws IOException {
-		byte piece[] = new byte[peer.pieceSize];
+		byte piece[] = null;
 		
 		try {
-			file.read(piece, pieceIndex * peer.pieceSize, peer.pieceSize);
+			int len = peer.pieceSize;
+			if(pieceIndex == peer.pieceCount - 1)
+				len = peer.fileSize % peer.pieceSize;
+			
+			piece = new byte[len];
+			
+			file.seek(pieceIndex * peer.pieceSize);
+			file.readFully(piece, 0, len);
 		}
 		catch(IOException e) {
 			System.out.println("Failed to read from " + peer.fileName + ".");
@@ -52,7 +62,12 @@ class FileHandler {
 	
 	void writePiece(byte[] piece, int pieceIndex) throws IOException {
 		try {
-			file.write(piece, pieceIndex * peer.pieceSize, piece.length);
+			int len = peer.pieceSize;
+			if(pieceIndex == peer.pieceCount - 1)
+				len = peer.fileSize % peer.pieceSize;
+			
+			file.seek(pieceIndex * peer.pieceSize);
+			file.write(piece, 0, len);
 		}
 		catch(IOException e) {
 			System.out.println("Failed to write to " + peer.fileName + ".");
