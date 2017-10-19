@@ -35,6 +35,7 @@ public class peerProcess {
 			peer = new peerProcess(args[0]);
 		}
 		catch(Exception e) {
+			e.printStackTrace();
 			return;
 		}
 		
@@ -83,6 +84,8 @@ public class peerProcess {
 		BufferedReader peerInfoConfigReader = new BufferedReader(new FileReader(peerInfoConfigPath));
 		try {
 			peerID = new String(arg);
+			peerInfos = new HashMap<String, PeerInfo>();
+			peerIDs = new ArrayList<String>();
 			previousPeersID = new ArrayList<String>();
 			
 			// Collect info for all peers
@@ -187,6 +190,7 @@ public class peerProcess {
 					scanner.close();
 					try {
 						peer.controller.shutdown();
+						peer.logger.closeFile();
 					}
 					catch(IOException | InterruptedException e) {
 						System.out.println("Failed to shutdown controller.");

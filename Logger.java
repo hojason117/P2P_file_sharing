@@ -20,7 +20,7 @@ public class Logger {
 		this.peerID = peerID;
 		logFileName = "log_peer_" + peerID + ".log";
 		writer = new PrintWriter(logFileName);
-		consoleDisplay = false;
+		consoleDisplay = true;
 	}
 	
 	void logTCPConnection(String partnerID, Direction dir) {
@@ -32,7 +32,10 @@ public class Logger {
 		else
 			log = currentTime + ": Peer " + peerID + " is connected from Peer " + partnerID + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -48,7 +51,10 @@ public class Logger {
 		}
 		log += ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -57,7 +63,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " has the optimistically unchoked neighbor " + neighborID + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -66,7 +75,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " is unchoked by " + neighborID + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -75,7 +87,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " is choked by " + neighborID + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -84,7 +99,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " received the ‘have’ message from " + partner + " for the piece " + pieceIndex + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}	
@@ -93,7 +111,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " received the ‘interested’ message from " + partner + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -102,7 +123,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " received the ‘not interested’ message from " + partner + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -112,7 +136,10 @@ public class Logger {
 		String log = currentTime + ": Peer " + peerID + " has downloaded the piece " + pieceIndex + " from " + partner + ". ";
 		log += "Now the number of pieces it has is " + totalPieces + ".";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -121,7 +148,10 @@ public class Logger {
 		String currentTime = getCurrentTime();
 		String log = currentTime + ": Peer " + peerID + " has downloaded the complete file.";
 		
-		writer.println(log);
+		synchronized(writer) {
+			writer.println(log);
+			writer.flush();
+		}
 		if(consoleDisplay)
 			System.out.println(log);
 	}
@@ -136,5 +166,9 @@ public class Logger {
 	
 	void toggleConsoleDisplay() {
 		consoleDisplay = (consoleDisplay) ? false : true;
+	}
+	
+	void closeFile() {
+		writer.close();
 	}
 }

@@ -82,7 +82,7 @@ class PeerHandler implements Runnable {
 			while(!shutdown) {
 				int index = -1;
 				int req = -1;
-				byte data[] = null;
+				byte data[] = new byte[peer.pieceSize];
 				
 				switch(MessageType.typeFromByte(messageType)) {
 				case CHOKE:
@@ -103,6 +103,7 @@ class PeerHandler implements Runnable {
 					peer.logger.logUnchoking(partnerID);
 					
 					req = bitfieldHandler.pickRequestIndex();
+					
 					synchronized(peer.controller.requested) {
 						peer.controller.requested.add(new Requested(partnerID, req));
 					}
@@ -135,18 +136,18 @@ class PeerHandler implements Runnable {
 					bitfieldHandler.setBitfield(index);
 					peer.logger.logReceiveHave(partnerID, index);
 					
-					if(bitfieldHandler.diff() && !sentInterested) {
+					if(bitfieldHandler.want(null) && !sentInterested) {
 						Interested.sendInterestedMessage(out);
 						sentInterested = true;
 					}
-					break;	
+					break;
 					
 				case BITFIELD:
 					byte bits[] = new byte[messageLength - 1];
-					in.read(bits, 0, messageLength - 1);
+					in.readFully(bits, 0, messageLength - 1);
 					peerInfo.bitfield = BitSet.valueOf(bits);
 					
-					if(bitfieldHandler.diff()) {
+					if(bitfieldHandler.want(null)) {
 						Interested.sendInterestedMessage(out);
 						sentInterested = true;
 					}
@@ -159,16 +160,17 @@ class PeerHandler implements Runnable {
 				case REQUEST:
 					if(!peerInfo.choked) {
 						index = in.readInt();
-							pieceHandler.sendPieceMessage(out, index);
+						pieceHandler.sendPieceMessage(out, index);
 					}
 					break;	
 					
 				case PIECE:
 					index = in.readInt();
 					downloadRate += (messageLength - 1);
-					in.read(data, 0, messageLength - 1);
+					in.readFully(data, 0, messageLength - 1);
 					int total = pieceHandler.rcvPieceMessage(data, index);
 					peer.logger.logDownloadPiece(partnerID, index, total);
+					pieceHandler.checkDownloadComplete();
 					
 					// Send have message to all peers
 					synchronized(peer.controller.peerHandlers) {
@@ -182,7 +184,7 @@ class PeerHandler implements Runnable {
 							for(PeerHandler p : peer.controller.peerHandlers) {
 								if(p.sentInterested) {
 									NotInterested.sendNotInterestedMessage(p.out);
-									sentInterested = false;
+									p.sentInterested = false;
 								}
 							}
 						}
@@ -190,9 +192,9 @@ class PeerHandler implements Runnable {
 					else {
 						synchronized(peer.controller.peerHandlers) {
 							for(PeerHandler p : peer.controller.peerHandlers) {
-								if(!p.bitfieldHandler.diff() && p.sentInterested) {
+								if(!bitfieldHandler.want(p.partnerID) && p.sentInterested) {
 									NotInterested.sendNotInterestedMessage(p.out);
-									sentInterested = false;
+									p.sentInterested = false;
 								}
 							}
 						}
@@ -222,6 +224,7 @@ class PeerHandler implements Runnable {
 		}
 		catch(IOException e) {
 			System.out.println("IOException in PeerHandler run.");
+			e.printStackTrace();
 			return;
 		}
 	}
@@ -245,8 +248,18 @@ class PeerHandler implements Runnable {
 				peerInfo.hasFile = true;
 		}
 		
-		boolean diff() {
-			return !peer.peerInfos.get(peer.peerID).bitfield.equals(peerInfo.bitfield);
+		boolean want(String targetID) {
+			peerProcess.PeerInfo target;
+			
+			if(targetID == null)
+				target = peerInfo;
+			else
+				target = peer.peerInfos.get(targetID);
+			
+			BitSet desire = (BitSet)target.bitfield.clone();
+			desire.andNot(peer.peerInfos.get(peer.peerID).bitfield);
+			
+			return (desire.length() == 0) ? false : true;
 		}
 		
 		int pickRequestIndex() {
@@ -254,8 +267,11 @@ class PeerHandler implements Runnable {
 			avail.andNot(peer.peerInfos.get(peer.peerID).bitfield);
 			
 			Random random = new Random();
+			int index = -1;
+			while(!(index >= 0 && index < peer.pieceCount))
+				index = avail.nextSetBit(random.nextInt(peer.pieceCount));
 			
-			return avail.nextSetBit(random.nextInt(peer.pieceCount));
+			return index;
 		}
 	}
 	
@@ -323,13 +339,14 @@ class PeerHandler implements Runnable {
 			peer.fileHandler.writePiece(data, index);
 			peer.peerInfos.get(peer.peerID).bitfield.set(index);
 			
-			// Check download complete
+			return peer.peerInfos.get(peer.peerID).bitfield.cardinality();
+		}
+		
+		void checkDownloadComplete() {
 			if(peer.peerInfos.get(peer.peerID).bitfield.cardinality() == peer.pieceCount) {
 				peer.peerInfos.get(peer.peerID).hasFile = true;
 				peer.logger.logDownloadComplete();
 			}
-			
-			return peer.peerInfos.get(peer.peerID).bitfield.cardinality();
 		}
 	}
 	
