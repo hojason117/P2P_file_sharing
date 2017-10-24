@@ -6,6 +6,9 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.BitSet;
 import java.util.Scanner;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -27,6 +30,7 @@ public class peerProcess {
 	Controller controller;
 	FileHandler fileHandler;
 	Logger logger;
+	final ScheduledExecutorService progressBar;
 
 	public static void main(String[] args) throws InterruptedException, IOException {
 		peerProcess peer;
@@ -129,6 +133,7 @@ public class peerProcess {
 			controller = new Controller(this);
 			fileHandler = new FileHandler(this);
 			logger = new Logger(peerID);
+			progressBar = Executors.newSingleThreadScheduledExecutor();
 		}
 		catch(FileNotFoundException e) {
 			System.out.println("Cannot find " + peerInfoConfigPath + ".");
@@ -178,13 +183,18 @@ public class peerProcess {
 			Scanner scanner = new Scanner(System.in);
 			String op;
 			while(true) {
-				System.out.print("Option('h' for help): ");
+				System.out.println("Option('h' for help): ");
+				peer.progressBar.scheduleAtFixedRate(new ProgressBar(peer), 0, 300, TimeUnit.MILLISECONDS);
+				
 				op = scanner.nextLine();
 				switch(op) {
 				case "h":
-					System.out.println("'h' for help");
-					System.out.println("'q' to terminate process");
-					System.out.println("'d' to toggle console display");
+					synchronized(System.out) {
+						System.out.print("\r");
+						System.out.println("'h' for help");
+						System.out.println("'q' to terminate process");
+						System.out.println("'d' to toggle console display");
+					}
 					break;
 				case "q":
 					scanner.close();
@@ -206,6 +216,31 @@ public class peerProcess {
 				}
 			}
 		}
+	}
+	
+	// Thread for displaying progress bar on console 
+	private static class ProgressBar implements Runnable {
+		final peerProcess peer;
+		
+		ProgressBar(peerProcess peer) {
+			this.peer = peer;
+		}
+		
+		public void run() {
+			displayProcessBar(peer);
+		}
+	}
+	
+	// Print progress bar
+	private static void displayProcessBar(peerProcess peer) {
+		int p = (int)((float)peer.peerInfos.get(peer.peerID).bitfield.cardinality() / (float)peer.pieceCount * 100);
+		System.out.format("\rProgress: [%3d%%] [", p);
+		for(int i = 0; i < p/2; i++)
+			System.out.print('#');
+		for(int i = p/2; i < 50; i++)
+			System.out.print('.');
+		System.out.print(']');
+		System.out.flush();
 	}
 	
 	// Start peerProcess : open a thread for main loop

@@ -16,7 +16,7 @@ class FileHandler {
 			file = new RandomAccessFile("peer_" + peer.peerID + "/" + peer.fileName, "r");
 			try {
 				if(file.length() != peer.fileSize)
-					System.out.println("Does not have complete " + peer.fileName + ".");
+					System.out.println("Does not have complete file " + peer.fileName + ".");
 			}
 			catch(FileNotFoundException e) {
 				System.out.println("Cannot find " + peer.fileName + ".");
@@ -49,8 +49,10 @@ class FileHandler {
 			
 			piece = new byte[len];
 			
-			file.seek(pieceIndex * peer.pieceSize);
-			file.readFully(piece, 0, len);
+			synchronized(file) {
+				file.seek(pieceIndex * peer.pieceSize);
+				file.readFully(piece, 0, len);
+			}
 		}
 		catch(IOException e) {
 			System.out.println("Failed to read from " + peer.fileName + ".");
@@ -66,8 +68,10 @@ class FileHandler {
 			if(pieceIndex == peer.pieceCount - 1)
 				len = peer.fileSize % peer.pieceSize;
 			
-			file.seek(pieceIndex * peer.pieceSize);
-			file.write(piece, 0, len);
+			synchronized(file) {
+				file.seek(pieceIndex * peer.pieceSize);
+				file.write(piece, 0, len);
+			}
 		}
 		catch(IOException e) {
 			System.out.println("Failed to write to " + peer.fileName + ".");

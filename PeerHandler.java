@@ -3,18 +3,20 @@ package cnt5106c.p2p_file_sharing;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.EOFException;
 import java.net.Socket;
 import java.util.BitSet;
 import java.util.Random;
+import java.net.SocketException;
 
 // Handle a single peer connection
 class PeerHandler implements Runnable {
-	peerProcess peer;
-	String partnerID;
-	peerProcess.PeerInfo peerInfo;
-	Socket neighborSocket;
-	DataInputStream in;
-	DataOutputStream out;
+	final peerProcess peer;
+	final String partnerID;
+	final peerProcess.PeerInfo peerInfo;
+	final Socket neighborSocket;
+	final DataInputStream in;
+	final DataOutputStream out;
 	private final BitfieldHandler bitfieldHandler;
 	private final PieceHandler pieceHandler;
 	int downloadRate;
@@ -46,11 +48,11 @@ class PeerHandler implements Runnable {
 		}
 	}
 	
-	PeerHandler(peerProcess peer, String partnerID, Socket neighboeSocket) throws IOException, InterruptedException {
+	PeerHandler(peerProcess peer, String partnerID, Socket neighborSocket) throws IOException, InterruptedException {
 		this.peer = peer;
 		this.partnerID = partnerID;
 		peerInfo = peer.peerInfos.get(partnerID);
-		this.neighborSocket = neighboeSocket;
+		this.neighborSocket = neighborSocket;
 		try {
 			in = new DataInputStream(neighborSocket.getInputStream());
 			out = new DataOutputStream(neighborSocket.getOutputStream());
@@ -76,13 +78,25 @@ class PeerHandler implements Runnable {
 			int messageLength;
 			byte messageType;
 			
-			messageLength = in.readInt();
-			messageType = in.readByte();
-			
 			while(!shutdown) {
 				int index = -1;
 				int req = -1;
 				byte data[] = new byte[peer.pieceSize];
+				
+				try {
+					if(neighborSocket.isClosed())
+						throw new SocketException();
+					
+					messageLength = in.readInt();
+					messageType = in.readByte();
+				}
+				catch(EOFException | SocketException e) {
+					//System.out.println("Peer " + peerInfo.ID + " socket closed.");
+					in.close();
+					out.close();
+					neighborSocket.close();
+					return;
+				}
 				
 				switch(MessageType.typeFromByte(messageType)) {
 				case CHOKE:
@@ -146,6 +160,8 @@ class PeerHandler implements Runnable {
 					byte bits[] = new byte[messageLength - 1];
 					in.readFully(bits, 0, messageLength - 1);
 					peerInfo.bitfield = BitSet.valueOf(bits);
+					if(peerInfo.bitfield.cardinality() == peer.pieceCount)
+						peerInfo.hasFile = true;
 					
 					if(bitfieldHandler.want(null)) {
 						Interested.sendInterestedMessage(out);
@@ -158,6 +174,9 @@ class PeerHandler implements Runnable {
 					break;
 					
 				case REQUEST:
+					if(peerInfo.choked)
+						in.readInt();
+					
 					if(!peerInfo.choked) {
 						index = in.readInt();
 						pieceHandler.sendPieceMessage(out, index);
@@ -173,29 +192,25 @@ class PeerHandler implements Runnable {
 					pieceHandler.checkDownloadComplete();
 					
 					// Send have message to all peers
-					synchronized(peer.controller.peerHandlers) {
-						for(PeerHandler p : peer.controller.peerHandlers)
-							Have.sendHaveMessage(p.out, index);
+					for(PeerHandler p : peer.controller.peerHandlers) {
+						//if(bitfieldHandler.oneWantsSpecificPiece(p.partnerID, index))
+						Have.sendHaveMessage(p.out, index);
 					}
 					
 					// Send not interested or another request
 					if(peer.peerInfos.get(peer.peerID).hasFile) {
-						synchronized(peer.controller.peerHandlers) {
-							for(PeerHandler p : peer.controller.peerHandlers) {
-								if(p.sentInterested) {
-									NotInterested.sendNotInterestedMessage(p.out);
-									p.sentInterested = false;
-								}
+						for(PeerHandler p : peer.controller.peerHandlers) {
+							if(p.sentInterested) {
+								NotInterested.sendNotInterestedMessage(p.out);
+								p.sentInterested = false;
 							}
 						}
 					}
 					else {
-						synchronized(peer.controller.peerHandlers) {
-							for(PeerHandler p : peer.controller.peerHandlers) {
-								if(!bitfieldHandler.want(p.partnerID) && p.sentInterested) {
-									NotInterested.sendNotInterestedMessage(p.out);
-									p.sentInterested = false;
-								}
+						for(PeerHandler p : peer.controller.peerHandlers) {
+							if(!bitfieldHandler.want(p.partnerID) && p.sentInterested) {
+								NotInterested.sendNotInterestedMessage(p.out);
+								p.sentInterested = false;
 							}
 						}
 						
@@ -213,11 +228,9 @@ class PeerHandler implements Runnable {
 					System.out.println("Invalid message type.");
 					break;
 				}
-				
-				messageLength = in.readInt();
-				messageType = in.readByte();
 			}
 			
+			System.out.println("Peer " + peerInfo.ID + " socket closed.");
 			in.close();
 			out.close();
 			neighborSocket.close();
@@ -232,7 +245,10 @@ class PeerHandler implements Runnable {
 	// Handle bitfield messages, maintain bitfield for partner and compare bitfield
 	private class BitfieldHandler {
 		void sendBitfieldMessage(DataOutputStream out) throws IOException {
-			byte bits[] = peer.peerInfos.get(peer.peerID).bitfield.toByteArray();
+			byte bits[] = null;
+			synchronized(peer.peerInfos.get(peer.peerID).bitfield) {
+				bits = peer.peerInfos.get(peer.peerID).bitfield.toByteArray();
+			}
 			
 			synchronized(out) {
 				out.writeInt(1 + bits.length);
@@ -257,14 +273,22 @@ class PeerHandler implements Runnable {
 				target = peer.peerInfos.get(targetID);
 			
 			BitSet desire = (BitSet)target.bitfield.clone();
-			desire.andNot(peer.peerInfos.get(peer.peerID).bitfield);
+			synchronized(peer.peerInfos.get(peer.peerID).bitfield) {
+				desire.andNot(peer.peerInfos.get(peer.peerID).bitfield);
+			}
 			
 			return (desire.length() == 0) ? false : true;
 		}
 		
+		boolean oneWantsSpecificPiece(String oneID, int index) {
+			return peer.peerInfos.get(oneID).bitfield.get(index) ? false : true;
+		}
+		
 		int pickRequestIndex() {
 			BitSet avail = (BitSet)peerInfo.bitfield.clone();
-			avail.andNot(peer.peerInfos.get(peer.peerID).bitfield);
+			synchronized(peer.peerInfos.get(peer.peerID).bitfield) {
+				avail.andNot(peer.peerInfos.get(peer.peerID).bitfield);
+			}
 			
 			Random random = new Random();
 			int index = -1;
@@ -343,9 +367,11 @@ class PeerHandler implements Runnable {
 		}
 		
 		void checkDownloadComplete() {
-			if(peer.peerInfos.get(peer.peerID).bitfield.cardinality() == peer.pieceCount) {
-				peer.peerInfos.get(peer.peerID).hasFile = true;
-				peer.logger.logDownloadComplete();
+			synchronized(peer.peerInfos.get(peer.peerID).bitfield) {
+				if(peer.peerInfos.get(peer.peerID).bitfield.cardinality() == peer.pieceCount) {
+					peer.peerInfos.get(peer.peerID).hasFile = true;
+					peer.logger.logDownloadComplete();
+				}
 			}
 		}
 	}
@@ -364,5 +390,6 @@ class PeerHandler implements Runnable {
 	// Close peer connection
 	void shutdown() throws InterruptedException, IOException {
 		shutdown = true;
+		neighborSocket.close();
 	}
 }
