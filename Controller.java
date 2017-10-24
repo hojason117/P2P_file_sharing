@@ -11,9 +11,11 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Random;
 import java.util.PriorityQueue;
 import java.util.Comparator;
+import java.util.List;
 
 // Main loop for peerProcess
 class Controller implements Runnable {
@@ -24,10 +26,10 @@ class Controller implements Runnable {
 	final private ScheduledExecutorService monitor;
 	final private ServerSocket server;
 	ArrayList<PeerHandler> peerHandlers;
-	ArrayList<String> interestedPeers;
-	ArrayList<String> chokedPeers;
-	ArrayList<PeerHandler.Requested> requested;
-	ArrayList<String> preferredNeighbors;
+	List<String> interestedPeers;
+	List<String> chokedPeers;
+	List<PeerHandler.Requested> requested;
+	List<String> preferredNeighbors;
 	String optUnchokedPeerID;
 	
 	Controller(peerProcess peer) throws IOException {
@@ -38,18 +40,18 @@ class Controller implements Runnable {
 		monitor = Executors.newSingleThreadScheduledExecutor();
 		server = new ServerSocket(peer.peerInfos.get(peer.peerID).port);
 		peerHandlers = new ArrayList<PeerHandler>();
-		interestedPeers = new ArrayList<String>();
-		chokedPeers = new ArrayList<String>();
-		requested = new ArrayList<PeerHandler.Requested>();
-		preferredNeighbors = new ArrayList<String>(peer.numPrefNeighbor);
+		interestedPeers = Collections.synchronizedList(new ArrayList<String>());
+		chokedPeers = Collections.synchronizedList(new ArrayList<String>());
+		requested = Collections.synchronizedList(new ArrayList<PeerHandler.Requested>());
+		preferredNeighbors = Collections.synchronizedList(new ArrayList<String>(peer.numPrefNeighbor));
 		optUnchokedPeerID = null;
 	}
 	
 	// Listen on inbound peer connections and open a new thread for each connection
 	public void run() {
-		unchoke.scheduleAtFixedRate(new UnchokeHandler(peer), peer.unchokeInterval, peer.unchokeInterval, TimeUnit.SECONDS);
-		optUnchoke.scheduleAtFixedRate(new OptUnchokeHandler(peer), peer.optUnchokeInterval, peer.optUnchokeInterval, TimeUnit.SECONDS);
-		monitor.scheduleAtFixedRate(new PeerFileMonitor(peer), 1, 1, TimeUnit.SECONDS);
+		unchoke.scheduleAtFixedRate(new UnchokeHandler(peer), 0, peer.unchokeInterval, TimeUnit.SECONDS);
+		optUnchoke.scheduleAtFixedRate(new OptUnchokeHandler(peer), 0, peer.optUnchokeInterval, TimeUnit.SECONDS);
+		monitor.scheduleAtFixedRate(new PeerFileMonitor(peer), 0, 2, TimeUnit.SECONDS);
 		
 		try {
 			init();
@@ -78,11 +80,14 @@ class Controller implements Runnable {
 		try {
 			while(true) {
 				Socket inbound = server.accept();
-				inbound.setSoTimeout(20000);
+				inbound.setSendBufferSize(1024000);
+				inbound.setReceiveBufferSize(1024000);
+				//inbound.setSoTimeout(25000);
 				
 				DataInputStream in = new DataInputStream(inbound.getInputStream());
 				if(Handshake.verifyHandshakeMessage(in, null)) {
 					String partnerID = String.valueOf(in.readInt());
+					chokedPeers.add(partnerID);
 					
 					DataOutputStream out = new DataOutputStream(inbound.getOutputStream());
 					Handshake.sendHandshakeMessage(out, peer.peerID);
@@ -90,9 +95,7 @@ class Controller implements Runnable {
 					peer.logger.logTCPConnection(partnerID, Logger.Direction.CONNECT_FROM);
 					PeerHandler peerHandler = new PeerHandler(peer, partnerID, inbound);
 					peer.peerInfos.get(partnerID).handler = peerHandler;
-					synchronized(peerHandlers) {
-						peerHandlers.add(peerHandler);
-					}
+					peerHandlers.add(peerHandler);
 					threadPool.submit(peerHandler);
 				}
 				else {
@@ -103,6 +106,13 @@ class Controller implements Runnable {
 		}
 		catch(SocketException e) {
 			System.out.println("Server closed.");
+			try {
+				shutdown();
+			}
+			catch(IOException | InterruptedException ex) {
+				System.out.println("Failed to shutdown controller.");
+				ex.printStackTrace();
+			}
 			return;
 		}
 		catch(IOException e) {
@@ -131,19 +141,20 @@ class Controller implements Runnable {
 	private void init() throws IOException, InterruptedException {
 		for (String p : peer.previousPeersID) {
 			Socket client = new Socket(peer.peerInfos.get(p).addr, peer.peerInfos.get(p).port);
-			client.setSoTimeout(20000);
+			client.setSendBufferSize(1024000);
+			client.setReceiveBufferSize(1024000);
+			//client.setSoTimeout(25000);
 			
 			DataOutputStream out = new DataOutputStream(client.getOutputStream());
 			Handshake.sendHandshakeMessage(out, peer.peerID);
 			
 			DataInputStream in = new DataInputStream(client.getInputStream());
 			if(Handshake.verifyHandshakeMessage(in, p)) {
+				chokedPeers.add(p);
 				peer.logger.logTCPConnection(p, Logger.Direction.CONNECT_TO);
 				PeerHandler peerHandler = new PeerHandler(peer, p, client);
 				peer.peerInfos.get(p).handler = peerHandler;
-				synchronized(peerHandlers) {
-					peerHandlers.add(peerHandler);
-				}
+				peerHandlers.add(peerHandler);
 				threadPool.submit(peerHandler);
 			}
 			else {
@@ -229,7 +240,8 @@ class Controller implements Runnable {
 				while(quota > 0 && !pQueue.isEmpty()) {
 					ArrayList<String> sameRate = new ArrayList<String>();
 					sameRate.add(pQueue.poll());
-					while(peer.peerInfos.get(pQueue.peek()).handler.downloadRate == peer.peerInfos.get(sameRate.get(0)).handler.downloadRate)
+					
+					while((!pQueue.isEmpty()) && (peer.peerInfos.get(pQueue.peek()).handler.downloadRate == peer.peerInfos.get(sameRate.get(0)).handler.downloadRate))
 						sameRate.add(pQueue.poll());
 					
 					if(sameRate.size() <= quota) {
@@ -255,12 +267,12 @@ class Controller implements Runnable {
 				for(String p : previous) {
 					if(!peer.controller.preferredNeighbors.contains(p)) {
 						try {
-							Choke.sendChokeMessage(peer.peerInfos.get(p).handler.out);
-							peer.controller.chokedPeers.add(p);
 							peer.peerInfos.get(p).choked = true;
+							peer.controller.chokedPeers.add(p);
+							Choke.sendChokeMessage(peer.peerInfos.get(p).handler.out, peer.peerInfos.get(p).handler.neighborSocket);
 						}
 						catch(IOException e) {
-							System.out.println("Failed to send choke message.");
+							System.out.println("Failed to send choke message to " + peer.peerInfos.get(p).ID + ".");
 							e.printStackTrace();
 						}
 					}
@@ -270,7 +282,6 @@ class Controller implements Runnable {
 				for(String p : peer.controller.preferredNeighbors) {
 					if(!previous.contains(p)) {
 						try {
-							Unchoke.sendUnchokeMessage(peer.peerInfos.get(p).handler.out);
 							for(int i = 0; i < peer.controller.chokedPeers.size(); i++) {
 								if(peer.controller.chokedPeers.get(i) == p) {
 									peer.controller.chokedPeers.remove(i);
@@ -278,9 +289,10 @@ class Controller implements Runnable {
 								}
 							}
 							peer.peerInfos.get(p).choked = false;
+							Unchoke.sendUnchokeMessage(peer.peerInfos.get(p).handler.out, peer.peerInfos.get(p).handler.neighborSocket);
 						}
 						catch(IOException e) {
-							System.out.println("Failed to send unchoke message.");
+							System.out.println("Failed to send unchoke message to " + peer.peerInfos.get(p).ID + ".");
 							e.printStackTrace();
 						}
 					}
@@ -288,10 +300,8 @@ class Controller implements Runnable {
 			}
 			
 			// Reset download rate counter for all peers
-			synchronized(peer.controller.peerHandlers) {
-				for(PeerHandler ph : peer.controller.peerHandlers)
-					ph.downloadRate = 0;
-			}
+			for(PeerHandler ph : peer.controller.peerHandlers)
+				ph.downloadRate = 0;
 		}
 	}
 	
@@ -307,30 +317,44 @@ class Controller implements Runnable {
 		
 		public void run() {
 			synchronized(peer.controller.chokedPeers) {
-				int index;
-				while(true) {
+				if(peer.controller.chokedPeers.size() == 0)
+					return;
+				
+				boolean existInterested = false;
+				for(String p : peer.controller.chokedPeers) {
+					if(peer.peerInfos.get(p).interested) {
+						existInterested = true;
+						break;
+					}
+				}
+				
+				int index = -1;
+				while(existInterested) {
 					index = random.nextInt(peer.controller.chokedPeers.size());
 					if(peer.peerInfos.get(peer.controller.chokedPeers.get(index)).interested) {
 						try {
 							// Choke previous optimistically unchoked neighbor
-							Choke.sendChokeMessage(peer.peerInfos.get(peer.controller.optUnchokedPeerID).handler.out);
-							peer.peerInfos.get(peer.controller.optUnchokedPeerID).choked = true;
-							peer.controller.chokedPeers.add(peer.controller.optUnchokedPeerID);
+							if(peer.controller.optUnchokedPeerID != null) {
+								peer.peerInfos.get(peer.controller.optUnchokedPeerID).choked = true;
+								peer.controller.chokedPeers.add(peer.controller.optUnchokedPeerID);
+								Choke.sendChokeMessage(peer.peerInfos.get(peer.controller.optUnchokedPeerID).handler.out,
+										peer.peerInfos.get(peer.controller.optUnchokedPeerID).handler.neighborSocket);
+							}
 							
 							// Set new optimistically unchoked neighbor
 							peer.controller.optUnchokedPeerID = peer.controller.chokedPeers.get(index);
 							peer.logger.logChangeOptimisticallyUnchokedNeighbor(peer.controller.optUnchokedPeerID);
 							
 							// Unchoke optimistically unchoked neighbor
-							Unchoke.sendUnchokeMessage(peer.peerInfos.get(peer.controller.optUnchokedPeerID).handler.out);
 							peer.peerInfos.get(peer.controller.optUnchokedPeerID).choked = false;
 							peer.controller.chokedPeers.remove(index);
+							Unchoke.sendUnchokeMessage(peer.peerInfos.get(peer.controller.optUnchokedPeerID).handler.out,
+									peer.peerInfos.get(peer.controller.optUnchokedPeerID).handler.neighborSocket);
 						}
 						catch(IOException e) {
 							System.out.println("Failed to send choke or unchoke message.");
 							e.printStackTrace();
 						}
-						
 						break;
 					}
 				}
@@ -340,8 +364,11 @@ class Controller implements Runnable {
 	
 	// Handle choke messages
 	private static class Choke {
-		static void sendChokeMessage(DataOutputStream out) throws IOException {
+		static void sendChokeMessage(DataOutputStream out, Socket target) throws IOException {
 			synchronized(out) {
+				if(target.isClosed())
+					return;
+				
 				out.writeInt(1);
 				out.writeByte(PeerHandler.MessageType.CHOKE.value);
 				out.flush();
@@ -351,8 +378,11 @@ class Controller implements Runnable {
 
 	// Handle unchoke messages
 	private static class Unchoke {
-		static void sendUnchokeMessage(DataOutputStream out) throws IOException {
+		static void sendUnchokeMessage(DataOutputStream out, Socket target) throws IOException {
 			synchronized(out) {
+				if(target.isClosed())
+					return;
+				
 				out.writeInt(1);
 				out.writeByte(PeerHandler.MessageType.UNCHOKE.value);
 				out.flush();
@@ -380,10 +410,11 @@ class Controller implements Runnable {
 			
 			if(allPeersFinished) {
 				try {
-					peer.controller.shutdown();
+					//System.out.println("All peers have finished download. Shutting down.");
+					peer.controller.server.close();
 					peer.logger.closeFile();
 				}
-				catch(IOException | InterruptedException e) {
+				catch(IOException e) {
 					System.out.println("Failed to shutdown controller.");
 					e.printStackTrace();
 					return;
@@ -400,20 +431,40 @@ class Controller implements Runnable {
 			peerHandlers = null;
 		}
 		
+		monitor.shutdown();
 		threadPool.shutdown();
+		unchoke.shutdown();
+		optUnchoke.shutdown();
+		peer.progressBar.shutdown();
+		
+		if(!monitor.awaitTermination(10, TimeUnit.SECONDS)) {
+			monitor.shutdownNow();
+			System.out.println("Executor service monitor did not terminate in 10 secs.");
+			System.out.println("May have runaway processes.");
+		}
+		
 		if(!threadPool.awaitTermination(30, TimeUnit.SECONDS)) {
 			threadPool.shutdownNow();
-			System.out.println("Executor service did not terminate in 30 secs.");
+			System.out.println("Executor service threadPool did not terminate in 30 secs.");
 			System.out.println("May have runaway processes.");
 		}
 		
-		monitor.shutdown();
-		if(!monitor.awaitTermination(30, TimeUnit.SECONDS)) {
-			monitor.shutdownNow();
-			System.out.println("Executor service did not terminate in 30 secs.");
+		if(!unchoke.awaitTermination(10, TimeUnit.SECONDS)) {
+			unchoke.shutdownNow();
+			System.out.println("Executor service unchoke did not terminate in 10 secs.");
 			System.out.println("May have runaway processes.");
 		}
 		
-		server.close();
+		if(!optUnchoke.awaitTermination(10, TimeUnit.SECONDS)) {
+			optUnchoke.shutdownNow();
+			System.out.println("Executor service optUnchoke did not terminate in 10 secs.");
+			System.out.println("May have runaway processes.");
+		}
+		
+		if(!peer.progressBar.awaitTermination(10, TimeUnit.SECONDS)) {
+			peer.progressBar.shutdownNow();
+			System.out.println("Executor service progressBar did not terminate in 10 secs.");
+			System.out.println("May have runaway processes.");
+		}
 	}
 }

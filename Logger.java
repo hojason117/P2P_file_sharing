@@ -3,7 +3,7 @@ package cnt5106c.p2p_file_sharing;
 import java.io.PrintWriter;
 import java.io.FileNotFoundException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.util.List;
 
 public class Logger {
 	private final String peerID;
@@ -20,7 +20,7 @@ public class Logger {
 		this.peerID = peerID;
 		logFileName = "log_peer_" + peerID + ".log";
 		writer = new PrintWriter(logFileName);
-		consoleDisplay = true;
+		consoleDisplay = false;
 	}
 	
 	void logTCPConnection(String partnerID, Direction dir) {
@@ -40,7 +40,7 @@ public class Logger {
 			System.out.println(log);
 	}
 	
-	void logChangePreferredNeighbor(ArrayList<String> neighbors) {
+	void logChangePreferredNeighbor(List<String> neighbors) {
 		String currentTime = getCurrentTime();
 		
 		String log = currentTime + ": Peer " + peerID + " has the preferred neighbors ";
@@ -133,8 +133,8 @@ public class Logger {
 	
 	void logDownloadPiece(String partner, int pieceIndex, int totalPieces) {
 		String currentTime = getCurrentTime();
-		String log = currentTime + ": Peer " + peerID + " has downloaded the piece " + pieceIndex + " from " + partner + ". ";
-		log += "Now the number of pieces it has is " + totalPieces + ".";
+		String log = currentTime + ": Peer " + peerID + " has downloaded the piece " + String.format("%5d", pieceIndex) + " from " + partner + ". ";
+		log += "Now the number of pieces it has is " + String.format("%5d", totalPieces) + ".";
 		
 		synchronized(writer) {
 			writer.println(log);
@@ -158,8 +158,8 @@ public class Logger {
 	
 	private String getCurrentTime() {
 		LocalDateTime time = LocalDateTime.now();
-		String currentTime = time.getYear() + "-" + time.getMonthValue() + "-" + time.getDayOfMonth() + " " 
-				+ time.getHour() + ":" + time.getMinute() + ":" + time.getSecond();
+		String currentTime = time.getYear() + "-" + String.format("%2s", time.getMonthValue()) + "-" + String.format("%2s", time.getDayOfMonth()) + " " 
+				+ String.format("%2s", time.getHour()) + ":" + String.format("%2s", time.getMinute()) + ":" + String.format("%2s", time.getSecond());
 		
 		return currentTime;
 	}
