@@ -390,7 +390,7 @@ class Controller implements Runnable {
 		}
 	}
 	
-	// Monitoring whether all peers have completed download, shutdown controller if all peers are done
+	// Monitoring whether all peers have completed download, shutdown controller if all peers are done.
 	private static class PeerFileMonitor implements Runnable {
 		final peerProcess peer;
 		

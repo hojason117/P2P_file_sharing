@@ -97,7 +97,7 @@ public class Logger {
 	
 	void logReceiveHave(String partner, int pieceIndex) {
 		String currentTime = getCurrentTime();
-		String log = currentTime + ": Peer " + peerID + " received the ‘have’ message from " + partner + " for the piece " + pieceIndex + ".";
+		String log = currentTime + ": Peer " + peerID + " received the 'have' message from " + partner + " for the piece " + pieceIndex + ".";
 		
 		synchronized(writer) {
 			writer.println(log);
@@ -109,7 +109,7 @@ public class Logger {
 	
 	void logReceiveInterested(String partner) {
 		String currentTime = getCurrentTime();
-		String log = currentTime + ": Peer " + peerID + " received the ‘interested’ message from " + partner + ".";
+		String log = currentTime + ": Peer " + peerID + " received the 'interested' message from " + partner + ".";
 		
 		synchronized(writer) {
 			writer.println(log);
@@ -121,7 +121,7 @@ public class Logger {
 	
 	void logReceiveNotInterested(String partner) {
 		String currentTime = getCurrentTime();
-		String log = currentTime + ": Peer " + peerID + " received the ‘not interested’ message from " + partner + ".";
+		String log = currentTime + ": Peer " + peerID + " received the 'not interested' message from " + partner + ".";
 		
 		synchronized(writer) {
 			writer.println(log);
