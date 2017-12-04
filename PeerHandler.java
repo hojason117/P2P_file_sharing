@@ -91,7 +91,7 @@ class PeerHandler implements Runnable {
 					messageType = in.readByte();
 				}
 				catch(EOFException | SocketException e) {
-					//System.out.println("Peer " + peerInfo.ID + " socket closed.");
+					System.out.println("Peer " + peerInfo.ID + " socket closed.");
 					in.close();
 					out.close();
 					neighborSocket.close();
@@ -239,6 +239,9 @@ class PeerHandler implements Runnable {
 			System.out.println("IOException in PeerHandler run.");
 			e.printStackTrace();
 			return;
+		}
+		catch(Exception e) {
+			System.out.println("Unexpected exception in PeerHandler run.");
 		}
 	}
 	
